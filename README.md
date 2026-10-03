@@ -240,7 +240,7 @@ jira-sync push ./tickets
 - Jira key write-back
 - validation
 - dry-run planning
-- machine-readable JSON planning
+- machine-readable JSON output for validation, planning, and push results
 - idempotent synchronization
 
 Example ticket:
@@ -278,7 +278,9 @@ Future pushes update `ENG-123` rather than creating another issue.
 Agents and automation can inspect a plan without parsing terminal tables:
 
 ```bash
+jira-sync validate ./tickets --json
 jira-sync plan ./tickets --offline --json
+jira-sync push ./tickets --yes --json
 ```
 
 See the Jira-specific documentation for configuration and usage details.

@@ -583,6 +583,14 @@ Validation errors result in a non-zero exit code.
 
 This command is safe for agents to run freely.
 
+For structured results, use:
+
+```bash
+jira-sync validate ./tickets --json
+```
+
+Successful validation returns `valid: true`, ticket and error counts, and an empty `errors` array. Invalid tickets return `valid: false`, structured error messages, and exit code `1`.
+
 ---
 
 # `plan`
@@ -714,6 +722,14 @@ Apply this plan to Jira?
 ```
 
 If confirmed, issues are created or updated one at a time.
+
+For machine-readable results, combine `--json` with `--yes`:
+
+```bash
+jira-sync push ./tickets --yes --json
+```
+
+Requiring `--yes` prevents an interactive confirmation prompt from contaminating standard output. The JSON result includes action totals, write-back status, and one result per ticket with the final Jira key. A successful item has `status: "succeeded"`. Push is not transactional; if Jira rejects an operation, earlier operations may already have completed.
 
 ---
 

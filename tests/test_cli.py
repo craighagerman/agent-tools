@@ -3,6 +3,7 @@ import json
 from typer.testing import CliRunner
 
 from agent_tools.jira_sync.cli import app
+from agent_tools.jira_sync.models import CreatedIssue
 
 
 runner = CliRunner()
@@ -80,3 +81,88 @@ def test_plan_json_online_reports_verified_updates(tmp_path, monkeypatch):
     assert payload["summary"] == {"total": 1, "create": 0, "update": 1, "noop": 0}
     assert payload["items"][0]["action"] == "UPDATE"
     assert payload["items"][0]["reason"] == "existing issue ENG-12"
+
+
+def test_validate_json_reports_success(tmp_path):
+    write_ticket(tmp_path / "ticket.md", "id: ticket\nproject: ENG", "Ticket")
+
+    result = runner.invoke(app, ["validate", str(tmp_path), "--json"])
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) == {
+        "schema_version": 1,
+        "valid": True,
+        "summary": {"tickets": 1, "errors": 0},
+        "errors": [],
+    }
+
+
+def test_validate_json_reports_errors_with_nonzero_exit(tmp_path):
+    write_ticket(
+        tmp_path / "ticket.md",
+        "id: ticket\nproject: ENG\nparent: missing",
+        "Ticket",
+    )
+
+    result = runner.invoke(app, ["validate", str(tmp_path), "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["valid"] is False
+    assert payload["summary"] == {"tickets": 1, "errors": 1}
+    assert "parent 'missing'" in payload["errors"][0]["message"]
+
+
+def test_push_json_requires_yes(tmp_path):
+    write_ticket(tmp_path / "ticket.md", "id: ticket\nproject: ENG", "Ticket")
+
+    result = runner.invoke(app, ["push", str(tmp_path), "--json"])
+
+    assert result.exit_code == 2
+    assert json.loads(result.stdout)["error"]["message"] == "--json requires --yes"
+
+
+def test_push_json_reports_created_and_updated_issues(tmp_path, monkeypatch):
+    write_ticket(
+        tmp_path / "create.md",
+        "id: new-ticket\nproject: ENG\ntype: Task",
+        "New ticket",
+    )
+    write_ticket(
+        tmp_path / "update.md",
+        "jira_key: ENG-12\nproject: ENG\ntype: Task",
+        "Existing ticket",
+    )
+
+    class FakeJira:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+        def issue_exists(self, key):
+            return key == "ENG-12"
+
+        def create_issue(self, fields):
+            return CreatedIssue(key="ENG-101")
+
+        def update_issue(self, key, fields):
+            return None
+
+    monkeypatch.setattr("agent_tools.jira_sync.cli._client", lambda settings: FakeJira())
+
+    result = runner.invoke(
+        app,
+        ["push", str(tmp_path), "--json", "--yes", "--no-write-back"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["write_back"] is False
+    assert payload["summary"] == {"total": 2, "create": 1, "update": 1, "noop": 0}
+    assert [(item["action"], item["jira_key"]) for item in payload["items"]] == [
+        ("CREATE", "ENG-101"),
+        ("UPDATE", "ENG-12"),
+    ]
+    assert all(item["status"] == "succeeded" for item in payload["items"])

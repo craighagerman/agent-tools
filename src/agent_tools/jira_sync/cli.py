@@ -45,20 +45,28 @@ def _load(path: Path | None):
     return settings, ticket_path, tickets
 
 
-def _plan_payload(items: list[PlanItem], ticket_path: Path, *, offline: bool) -> dict[str, object]:
+def _relative_ticket_path(path: Path, ticket_path: Path) -> str:
     root = ticket_path if ticket_path.is_dir() else ticket_path.parent
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
+def _action_summary(items: list[PlanItem]) -> dict[str, int]:
     counts = {action.value.lower(): 0 for action in Action}
-    rendered_items: list[dict[str, object]] = []
     for item in items:
         counts[item.action.value.lower()] += 1
-        try:
-            path = str(item.ticket.path.relative_to(root))
-        except ValueError:
-            path = str(item.ticket.path)
+    return {"total": len(items), **counts}
+
+
+def _plan_payload(items: list[PlanItem], ticket_path: Path, *, offline: bool) -> dict[str, object]:
+    rendered_items: list[dict[str, object]] = []
+    for item in items:
         rendered_items.append(
             {
                 "action": item.action.value,
-                "file": path,
+                "file": _relative_ticket_path(item.ticket.path, ticket_path),
                 "local_id": item.ticket.local_id,
                 "jira_key": item.ticket.jira_key,
                 "project": item.ticket.project,
@@ -74,18 +82,75 @@ def _plan_payload(items: list[PlanItem], ticket_path: Path, *, offline: bool) ->
     return {
         "schema_version": 1,
         "mode": "offline" if offline else "online",
-        "summary": {"total": len(items), **counts},
+        "summary": _action_summary(items),
         "items": rendered_items,
     }
+
+
+def _validation_payload(ticket_count: int, errors: list[str]) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "valid": not errors,
+        "summary": {"tickets": ticket_count, "errors": len(errors)},
+        "errors": [{"message": error} for error in errors],
+    }
+
+
+def _push_payload(
+    items: list[PlanItem],
+    results: list[tuple[PlanItem, str]],
+    ticket_path: Path,
+    *,
+    write_back: bool,
+) -> dict[str, object]:
+    result_keys = {item.ticket.path: key for item, key in results}
+    local_keys = {
+        item.ticket.local_id: key
+        for item, key in results
+        if item.ticket.local_id
+    }
+    rendered_items: list[dict[str, object]] = []
+    for item in items:
+        parent = item.ticket.parent
+        rendered_items.append(
+            {
+                "action": item.action.value,
+                "file": _relative_ticket_path(item.ticket.path, ticket_path),
+                "local_id": item.ticket.local_id,
+                "jira_key": result_keys.get(item.ticket.path, item.ticket.jira_key),
+                "project": item.ticket.project,
+                "issue_type": item.ticket.issue_type,
+                "summary": item.ticket.summary,
+                "parent": parent,
+                "resolved_parent_key": local_keys.get(parent, item.resolved_parent),
+                "status": "succeeded",
+            }
+        )
+    return {
+        "schema_version": 1,
+        "write_back": write_back,
+        "summary": _action_summary(items),
+        "items": rendered_items,
+    }
+
+
+def _json_error(message: str) -> dict[str, object]:
+    return {"schema_version": 1, "error": {"message": message}}
 
 
 @app.command()
 def validate(
     path: Annotated[Path | None, typer.Argument(help="Markdown ticket file or directory")] = None,
+    json_output: Annotated[bool, typer.Option("--json", help="Emit a machine-readable JSON result")] = False,
 ) -> None:
     """Validate local Markdown tickets without contacting Jira."""
     _, _, tickets = _load(path)
     errors = validate_ticket_set(tickets)
+    if json_output:
+        typer.echo(json.dumps(_validation_payload(len(tickets), errors), indent=2, ensure_ascii=False))
+        if errors:
+            raise typer.Exit(code=1)
+        return
     if errors:
         for error in errors:
             console.print(f"[red]ERROR[/red] {error}")
@@ -139,21 +204,40 @@ def push(
     path: Annotated[Path | None, typer.Argument(help="Markdown ticket file or directory")] = None,
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Skip confirmation prompt")] = False,
     no_write_back: Annotated[bool, typer.Option("--no-write-back", help="Do not add jira_key to created ticket files")] = False,
+    json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON results; requires --yes")] = False,
 ) -> None:
     """Create/update Jira issues and write created keys back to Markdown."""
-    settings, _, tickets = _load(path)
+    if json_output and not yes:
+        typer.echo(json.dumps(_json_error("--json requires --yes"), indent=2))
+        raise typer.Exit(code=2)
+
+    settings, ticket_path, tickets = _load(path)
     try:
         with _client(settings) as jira:
             items = build_plan(tickets, jira)
             creates = sum(i.action.value == "CREATE" for i in items)
             updates = sum(i.action.value == "UPDATE" for i in items)
-            console.print(f"Plan: [green]{creates} create[/green], [yellow]{updates} update[/yellow]")
+            if not json_output:
+                console.print(f"Plan: [green]{creates} create[/green], [yellow]{updates} update[/yellow]")
             if not yes and not typer.confirm("Apply this plan to Jira?"):
                 raise typer.Abort()
             results = execute_plan(items, jira, write_back=not no_write_back)
     except (ValueError, JiraError) as exc:
-        console.print(f"[red]{exc}[/red]")
+        if json_output:
+            typer.echo(json.dumps(_json_error(str(exc)), indent=2, ensure_ascii=False))
+        else:
+            console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1)
+
+    if json_output:
+        typer.echo(
+            json.dumps(
+                _push_payload(items, results, ticket_path, write_back=not no_write_back),
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+        return
 
     for item, key in results:
         console.print(f"[green]{item.action.value}[/green] {key}  {item.ticket.summary}")

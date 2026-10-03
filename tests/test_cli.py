@@ -51,10 +51,52 @@ def test_plan_json_offline_emits_structured_plan(tmp_path):
         "priority": None,
         "labels": ["agents"],
         "reason": "no jira_key",
+        "changed_fields": [],
     }
 
 
 def test_plan_json_online_reports_verified_updates(tmp_path, monkeypatch):
+    write_ticket(
+        tmp_path / "existing.md",
+        "jira_key: ENG-12\nproject: ENG\ntype: Task",
+        "Existing ticket",
+    )
+
+    class FakeJira:
+        def __init__(self):
+            self.updated = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+        def get_issue_or_none(self, key, fields=None):
+            return {
+                "key": key,
+                "fields": {
+                    "project": {"key": "ENG"},
+                    "issuetype": {"name": "Task"},
+                    "summary": "Old summary",
+                    "description": None,
+                },
+            }
+
+    monkeypatch.setattr("agent_tools.jira_sync.cli._client", lambda settings: FakeJira())
+
+    result = runner.invoke(app, ["plan", str(tmp_path), "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["mode"] == "online"
+    assert payload["summary"] == {"total": 1, "create": 0, "update": 1, "noop": 0}
+    assert payload["items"][0]["action"] == "UPDATE"
+    assert payload["items"][0]["reason"] == "changed fields: summary"
+    assert payload["items"][0]["changed_fields"] == ["summary"]
+
+
+def test_plan_json_online_reports_noop(tmp_path, monkeypatch):
     write_ticket(
         tmp_path / "existing.md",
         "jira_key: ENG-12\nproject: ENG\ntype: Task",
@@ -68,8 +110,16 @@ def test_plan_json_online_reports_verified_updates(tmp_path, monkeypatch):
         def __exit__(self, *_):
             return None
 
-        def issue_exists(self, key):
-            return key == "ENG-12"
+        def get_issue_or_none(self, key, fields=None):
+            return {
+                "key": key,
+                "fields": {
+                    "project": {"key": "ENG"},
+                    "issuetype": {"name": "Task"},
+                    "summary": "Existing ticket",
+                    "description": None,
+                },
+            }
 
     monkeypatch.setattr("agent_tools.jira_sync.cli._client", lambda settings: FakeJira())
 
@@ -77,10 +127,9 @@ def test_plan_json_online_reports_verified_updates(tmp_path, monkeypatch):
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["mode"] == "online"
-    assert payload["summary"] == {"total": 1, "create": 0, "update": 1, "noop": 0}
-    assert payload["items"][0]["action"] == "UPDATE"
-    assert payload["items"][0]["reason"] == "existing issue ENG-12"
+    assert payload["summary"] == {"total": 1, "create": 0, "update": 0, "noop": 1}
+    assert payload["items"][0]["action"] == "NOOP"
+    assert payload["items"][0]["changed_fields"] == []
 
 
 def test_validate_json_reports_success(tmp_path):
@@ -135,22 +184,34 @@ def test_push_json_reports_created_and_updated_issues(tmp_path, monkeypatch):
     )
 
     class FakeJira:
+        def __init__(self):
+            self.updated = []
+
         def __enter__(self):
             return self
 
         def __exit__(self, *_):
             return None
 
-        def issue_exists(self, key):
-            return key == "ENG-12"
+        def get_issue_or_none(self, key, fields=None):
+            return {
+                "key": key,
+                "fields": {
+                    "project": {"key": "ENG"},
+                    "issuetype": {"name": "Task"},
+                    "summary": "Old summary",
+                    "description": None,
+                },
+            }
 
         def create_issue(self, fields):
             return CreatedIssue(key="ENG-101")
 
         def update_issue(self, key, fields):
-            return None
+            self.updated.append((key, fields))
 
-    monkeypatch.setattr("agent_tools.jira_sync.cli._client", lambda settings: FakeJira())
+    jira = FakeJira()
+    monkeypatch.setattr("agent_tools.jira_sync.cli._client", lambda settings: jira)
 
     result = runner.invoke(
         app,
@@ -166,3 +227,42 @@ def test_push_json_reports_created_and_updated_issues(tmp_path, monkeypatch):
         ("UPDATE", "ENG-12"),
     ]
     assert all(item["status"] == "succeeded" for item in payload["items"])
+    assert jira.updated == [("ENG-12", {"summary": "Existing ticket"})]
+
+
+def test_push_json_reports_noop_as_skipped(tmp_path, monkeypatch):
+    write_ticket(
+        tmp_path / "existing.md",
+        "jira_key: ENG-12\nproject: ENG\ntype: Task",
+        "Existing ticket",
+    )
+
+    class FakeJira:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+        def get_issue_or_none(self, key, fields=None):
+            return {
+                "key": key,
+                "fields": {
+                    "project": {"key": "ENG"},
+                    "issuetype": {"name": "Task"},
+                    "summary": "Existing ticket",
+                    "description": None,
+                },
+            }
+
+        def update_issue(self, key, fields):
+            raise AssertionError("NOOP issue must not be updated")
+
+    monkeypatch.setattr("agent_tools.jira_sync.cli._client", lambda settings: FakeJira())
+
+    result = runner.invoke(app, ["push", str(tmp_path), "--json", "--yes"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["summary"] == {"total": 1, "create": 0, "update": 0, "noop": 1}
+    assert payload["items"][0]["status"] == "skipped"

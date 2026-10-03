@@ -48,6 +48,7 @@ class PlanItem(BaseModel):
     action: Action
     reason: str
     resolved_parent: str | None = None
+    changed_fields: list[str] = Field(default_factory=list)
 
 
 class CreatedIssue(BaseModel):

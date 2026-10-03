@@ -607,16 +607,24 @@ Online planning contacts Jira.
 
 For tickets containing a `jira_key`, it verifies that the Jira issue actually exists.
 
+It then compares the locally managed fields with the current Jira values. The comparison normalizes Jira field wrappers, label ordering, equivalent empty descriptions, and server-enriched custom-field objects. Optional fields omitted from front matter remain untouched in Jira and are not treated as differences.
+
 A ticket without a `jira_key` becomes:
 
 ```text
 CREATE
 ```
 
-A ticket with an existing `jira_key` becomes:
+A ticket with an existing `jira_key` and changed managed fields becomes:
 
 ```text
 UPDATE
+```
+
+An existing ticket whose managed fields already match becomes:
+
+```text
+NOOP
 ```
 
 The CLI displays a table containing:
@@ -628,13 +636,16 @@ The CLI displays a table containing:
 - parent
 - reason
 
+For updates, the reason lists the changed field names. `NOOP` tickets are not sent back to Jira during `push`.
+
 Example conceptually:
 
 ```text
 Action   File                         Type    Summary                  Parent          Reason
 CREATE   tickets/epic.md              Epic    Agent platform                           no jira_key
 CREATE   tickets/observability.md     Story   Add observability       agent-platform  no jira_key
-UPDATE   tickets/evals.md             Story   Improve eval pipeline   ENG-101         existing issue ENG-205
+UPDATE   tickets/evals.md             Story   Improve eval pipeline   ENG-101         changed fields: summary
+NOOP     tickets/docs.md              Task    Refresh documentation                    no managed field changes
 ```
 
 Planning never modifies Jira.
@@ -657,6 +668,8 @@ jira_key present  → UPDATE
 ```
 
 It does not verify whether referenced Jira issues actually exist.
+
+Offline mode cannot compare Jira field values, so every ticket with a `jira_key` is conservatively reported as `UPDATE`.
 
 This is useful during local editing, CI validation, or when an AI agent should inspect proposed changes before being granted external-system access.
 
@@ -691,13 +704,14 @@ The JSON document contains a versioned schema, the planning mode, aggregate acti
       "resolved_parent_key": null,
       "priority": "High",
       "labels": ["agents"],
-      "reason": "no jira_key"
+      "reason": "no jira_key",
+      "changed_fields": []
     }
   ]
 }
 ```
 
-JSON is written to standard output, making it safe to pipe to tools such as `jq`. Planning remains read-only. The current planner reports create or update intent; it does not yet calculate field-level diffs or semantic `NOOP` results.
+JSON is written to standard output, making it safe to pipe to tools such as `jq`. Planning remains read-only. Online plan items include `changed_fields`; offline items leave that list empty because Jira was not queried.
 
 ---
 
@@ -952,7 +966,7 @@ If you modify its Markdown description and run:
 jira-sync plan ./tickets
 ```
 
-the ticket is reported as:
+the ticket is reported as `UPDATE` only when a managed field differs from Jira. The plan reason and JSON `changed_fields` list identify the differences, and `push` sends only those changed fields. If all managed fields match, it is reported as `NOOP` and `push` does not send an update.
 
 ```text
 UPDATE
@@ -964,7 +978,7 @@ Running:
 jira-sync push ./tickets
 ```
 
-sends the current local fields and description to:
+sends the changed local fields to:
 
 ```text
 ENG-102
@@ -1177,22 +1191,6 @@ Changes made directly in Jira are not automatically reflected locally.
 
 ---
 
-## No semantic `NOOP` detection
-
-Although the internal action model includes `NOOP`, v0.1 does not fetch and compare all Jira field values.
-
-A file with a valid `jira_key` is therefore planned as:
-
-```text
-UPDATE
-```
-
-even if the local representation has not changed.
-
-A future version may compare local and remote representations before deciding whether an update is required.
-
----
-
 ## No deletion
 
 Deleting a Markdown file does not delete the corresponding Jira issue.
@@ -1318,7 +1316,6 @@ jira.py
 
 Potential enhancements include:
 
-- semantic diffing and `NOOP` actions
 - Jira field/schema discovery
 - OAuth authentication
 - Jira → Markdown pull
@@ -1329,8 +1326,6 @@ Potential enhancements include:
 - comments
 - transitions and workflow operations
 - bulk operations
-- machine-readable plan output such as JSON
-- structured agent-facing output
 - MCP wrappers around the same underlying Python implementation
 
 The CLI should remain useful independently of any particular AI agent or MCP implementation.

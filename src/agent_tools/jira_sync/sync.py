@@ -2,34 +2,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from .adf import markdown_to_adf
+from .issue_fields import fields_for_ticket
 from .jira import JiraClient
 from .markdown import write_jira_key
 from .models import Action, PlanItem
 
 
 def fields_for(item: PlanItem, local_key_map: dict[str, str]) -> dict[str, Any]:
-    ticket = item.ticket
-    fields: dict[str, Any] = {
-        "project": {"key": ticket.project},
-        "issuetype": {"name": ticket.issue_type},
-        "summary": ticket.summary,
-        "description": markdown_to_adf(ticket.description_markdown),
-    }
-    if ticket.labels:
-        fields["labels"] = ticket.labels
-    if ticket.priority:
-        fields["priority"] = {"name": ticket.priority}
-    if ticket.assignee_account_id:
-        fields["assignee"] = {"accountId": ticket.assignee_account_id}
-
-    parent = ticket.parent
-    if parent:
-        parent_key = local_key_map.get(parent, parent)
-        fields["parent"] = {"key": parent_key}
-
-    fields.update(ticket.extra_fields)
-    return fields
+    parent = item.ticket.parent
+    parent_key = local_key_map.get(parent, parent) if parent else None
+    return fields_for_ticket(item.ticket, parent_key)
 
 
 def execute_plan(plan: list[PlanItem], jira: JiraClient, *, write_back: bool = True) -> list[tuple[PlanItem, str]]:
@@ -60,6 +42,8 @@ def execute_plan(plan: list[PlanItem], jira: JiraClient, *, write_back: bool = T
                 results.append((item, key))
             elif item.action == Action.UPDATE:
                 assert item.ticket.jira_key
+                if item.changed_fields:
+                    fields = {name: fields[name] for name in item.changed_fields}
                 jira.update_issue(item.ticket.jira_key, fields)
                 results.append((item, item.ticket.jira_key))
             pending.remove(item)

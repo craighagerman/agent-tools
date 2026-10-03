@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from .issue_fields import changed_fields, fields_for_ticket
 from .jira import JiraClient
 from .models import Action, PlanItem, Ticket
 
@@ -43,13 +44,31 @@ def build_plan(tickets: list[Ticket], jira: JiraClient | None = None) -> list[Pl
             if jira is None:
                 action = Action.UPDATE
                 reason = "jira_key present"
-            elif jira.issue_exists(ticket.jira_key):
-                action = Action.UPDATE
-                reason = f"existing issue {ticket.jira_key}"
             else:
-                raise ValueError(f"{ticket.path}: jira_key {ticket.jira_key} does not exist")
+                desired = fields_for_ticket(ticket, resolved_parent)
+                issue = jira.get_issue_or_none(ticket.jira_key, fields=list(desired))
+                if issue is None:
+                    raise ValueError(f"{ticket.path}: jira_key {ticket.jira_key} does not exist")
+                changes = changed_fields(desired, issue)
+                if ticket.parent and not _looks_like_jira_key(ticket.parent) and not resolved_parent:
+                    changes.append("parent")
+                if changes:
+                    action = Action.UPDATE
+                    reason = "changed fields: " + ", ".join(changes)
+                else:
+                    action = Action.NOOP
+                    reason = "no managed field changes"
         else:
             action = Action.CREATE
             reason = "no jira_key"
-        plan.append(PlanItem(ticket=ticket, action=action, reason=reason, resolved_parent=resolved_parent))
+            changes = []
+        plan.append(
+            PlanItem(
+                ticket=ticket,
+                action=action,
+                reason=reason,
+                resolved_parent=resolved_parent,
+                changed_fields=changes if jira is not None and ticket.jira_key else [],
+            )
+        )
     return plan

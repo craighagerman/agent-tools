@@ -47,6 +47,15 @@ class JiraClient:
     def get_issue(self, key: str) -> dict[str, Any]:
         return self._request("GET", f"/rest/api/3/issue/{key}")
 
+    def get_issue_or_none(self, key: str, fields: list[str] | None = None) -> dict[str, Any] | None:
+        params = {"fields": ",".join(fields)} if fields else None
+        response = self.client.get(f"/rest/api/3/issue/{key}", params=params)
+        if response.status_code == 404:
+            return None
+        if response.is_error:
+            raise JiraError(f"Jira API {response.status_code}: {response.text}")
+        return response.json()
+
     def issue_exists(self, key: str) -> bool:
         response = self.client.get(f"/rest/api/3/issue/{key}")
         if response.status_code == 404:

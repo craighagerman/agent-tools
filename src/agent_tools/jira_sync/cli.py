@@ -77,6 +77,7 @@ def _plan_payload(items: list[PlanItem], ticket_path: Path, *, offline: bool) ->
                 "priority": item.ticket.priority,
                 "labels": item.ticket.labels,
                 "reason": item.reason,
+                "changed_fields": item.changed_fields,
             }
         )
     return {
@@ -123,7 +124,8 @@ def _push_payload(
                 "summary": item.ticket.summary,
                 "parent": parent,
                 "resolved_parent_key": local_keys.get(parent, item.resolved_parent),
-                "status": "succeeded",
+                "changed_fields": item.changed_fields,
+                "status": "skipped" if item.action == Action.NOOP else "succeeded",
             }
         )
     return {
@@ -217,8 +219,12 @@ def push(
             items = build_plan(tickets, jira)
             creates = sum(i.action.value == "CREATE" for i in items)
             updates = sum(i.action.value == "UPDATE" for i in items)
+            noops = sum(i.action.value == "NOOP" for i in items)
             if not json_output:
-                console.print(f"Plan: [green]{creates} create[/green], [yellow]{updates} update[/yellow]")
+                console.print(
+                    f"Plan: [green]{creates} create[/green], "
+                    f"[yellow]{updates} update[/yellow], {noops} unchanged"
+                )
             if not yes and not typer.confirm("Apply this plan to Jira?"):
                 raise typer.Abort()
             results = execute_plan(items, jira, write_back=not no_write_back)
@@ -241,6 +247,9 @@ def push(
 
     for item, key in results:
         console.print(f"[green]{item.action.value}[/green] {key}  {item.ticket.summary}")
+    for item in items:
+        if item.action == Action.NOOP:
+            console.print(f"[dim]NOOP[/dim] {item.ticket.jira_key}  {item.ticket.summary}")
 
 
 if __name__ == "__main__":

@@ -240,6 +240,7 @@ jira-sync push ./tickets
 - Jira key write-back
 - validation
 - dry-run planning
+- semantic field comparison and `NOOP` detection
 - machine-readable JSON output for validation, planning, and push results
 - idempotent synchronization
 

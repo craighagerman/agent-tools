@@ -48,3 +48,29 @@ def test_fields_include_custom_fields(tmp_path):
     item = PlanItem(ticket=ticket, action=Action.CREATE, reason="new")
     fields = fields_for(item, {})
     assert fields["customfield_10042"] == 5
+
+
+def test_execute_skips_noop_items(tmp_path):
+    ticket = t(tmp_path / "existing.md", "Existing", jira_key="ENG-12")
+    item = PlanItem(ticket=ticket, action=Action.NOOP, reason="no managed field changes")
+    jira = FakeJira()
+
+    results = execute_plan([item], jira)
+
+    assert results == []
+    assert jira.updated == []
+
+
+def test_execute_sends_only_changed_fields_for_semantic_update(tmp_path):
+    ticket = t(tmp_path / "existing.md", "Existing", jira_key="ENG-12", priority="High")
+    item = PlanItem(
+        ticket=ticket,
+        action=Action.UPDATE,
+        reason="changed fields: summary",
+        changed_fields=["summary"],
+    )
+    jira = FakeJira()
+
+    execute_plan([item], jira)
+
+    assert jira.updated == [("ENG-12", {"summary": "Existing"})]

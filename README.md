@@ -321,6 +321,8 @@ Secrets should never be committed to this repository.
 
 Credentials should be provided through environment variables, the operating system credential store, or another secret-management system.
 
+For local use, `jira-sync` also loads an ignored `.env` file through `python-dotenv`. Real process variables take precedence over file values. Copy `.env.example` to `.env` and fill in the local values; never commit that file.
+
 For Jira, for example:
 
 ```bash

@@ -8,6 +8,8 @@ env.bak/
 venv.bak/
 
 
+cli_commands.*
+
 # IntelliJ
 .idea/
 

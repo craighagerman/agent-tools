@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import os
+import tomllib
 from pathlib import Path
 from typing import Any
-import tomllib
 
 from pydantic import BaseModel
+
+from agent_tools.environment import load_environment
 
 
 class JiraSettings(BaseModel):
@@ -33,6 +35,7 @@ def _find_project_config(start: Path) -> Path | None:
 
 def load_settings(start: Path | None = None) -> JiraSettings:
     start = start or Path.cwd()
+    load_environment(start)
     values: dict[str, Any] = {}
     config_path = _find_project_config(start)
     if config_path:

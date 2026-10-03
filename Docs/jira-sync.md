@@ -92,7 +92,16 @@ export JIRA_PROJECT='ENG'
 
 Do not commit API tokens to source control.
 
-`jira-sync` intentionally does not automatically load `.env` files. Secrets should be supplied by the shell, password manager, secret manager, CI environment, or agent runtime.
+For local development, the same values can be stored in an ignored `.env` file:
+
+```dotenv
+JIRA_BASE_URL=https://your-company.atlassian.net
+JIRA_EMAIL=you@example.com
+JIRA_API_TOKEN=your-api-token
+JIRA_PROJECT=ENG
+```
+
+`jira-sync` loads `.env` through `python-dotenv`. Existing process variables are never overwritten. It searches for an explicit `AGENT_TOOLS_ENV_FILE`, then the nearest `.env` at or above the ticket path, `~/.config/agent-tools/.env`, and finally a `.env` in the source checkout. Keep real secrets out of Git; `.env.example` documents the supported names.
 
 ---
 

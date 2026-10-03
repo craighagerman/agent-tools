@@ -240,6 +240,7 @@ jira-sync push ./tickets
 - Jira key write-back
 - validation
 - dry-run planning
+- machine-readable JSON planning
 - idempotent synchronization
 
 Example ticket:
@@ -273,6 +274,12 @@ jira_key: ENG-123
 ```
 
 Future pushes update `ENG-123` rather than creating another issue.
+
+Agents and automation can inspect a plan without parsing terminal tables:
+
+```bash
+jira-sync plan ./tickets --offline --json
+```
 
 See the Jira-specific documentation for configuration and usage details.
 
@@ -433,4 +440,3 @@ Agents are good at handling ambiguity.
 Software is good at enforcing invariants.
 
 `agent-tools` exists to make those two capabilities work together.
-

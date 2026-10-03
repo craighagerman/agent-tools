@@ -654,6 +654,45 @@ This is useful during local editing, CI validation, or when an AI agent should i
 
 ---
 
+## JSON plan
+
+Agents and automation can request a structured plan instead of the Rich terminal table:
+
+```bash
+jira-sync plan ./tickets --json
+jira-sync plan ./tickets --offline --json
+```
+
+The JSON document contains a versioned schema, the planning mode, aggregate action counts, and one item per ticket. Each item includes its action, relative file path, local and Jira identifiers, project, issue type, summary, parent references, priority, labels, and planning reason.
+
+```json
+{
+  "schema_version": 1,
+  "mode": "offline",
+  "summary": {"total": 2, "create": 2, "update": 0, "noop": 0},
+  "items": [
+    {
+      "action": "CREATE",
+      "file": "epic.md",
+      "local_id": "agent-platform",
+      "jira_key": null,
+      "project": "ENG",
+      "issue_type": "Epic",
+      "summary": "Agent platform",
+      "parent": null,
+      "resolved_parent_key": null,
+      "priority": "High",
+      "labels": ["agents"],
+      "reason": "no jira_key"
+    }
+  ]
+}
+```
+
+JSON is written to standard output, making it safe to pipe to tools such as `jq`. Planning remains read-only. The current planner reports create or update intent; it does not yet calculate field-level diffs or semantic `NOOP` results.
+
+---
+
 # `push`
 
 Apply the synchronization plan:

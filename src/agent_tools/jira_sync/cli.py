@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Annotated
 
@@ -10,6 +11,7 @@ from rich.table import Table
 from .config import JiraSettings, load_settings
 from .jira import JiraClient, JiraError
 from .markdown import discover_tickets
+from .models import Action, PlanItem
 from .planner import build_plan, validate_ticket_set
 from .sync import execute_plan
 
@@ -43,6 +45,40 @@ def _load(path: Path | None):
     return settings, ticket_path, tickets
 
 
+def _plan_payload(items: list[PlanItem], ticket_path: Path, *, offline: bool) -> dict[str, object]:
+    root = ticket_path if ticket_path.is_dir() else ticket_path.parent
+    counts = {action.value.lower(): 0 for action in Action}
+    rendered_items: list[dict[str, object]] = []
+    for item in items:
+        counts[item.action.value.lower()] += 1
+        try:
+            path = str(item.ticket.path.relative_to(root))
+        except ValueError:
+            path = str(item.ticket.path)
+        rendered_items.append(
+            {
+                "action": item.action.value,
+                "file": path,
+                "local_id": item.ticket.local_id,
+                "jira_key": item.ticket.jira_key,
+                "project": item.ticket.project,
+                "issue_type": item.ticket.issue_type,
+                "summary": item.ticket.summary,
+                "parent": item.ticket.parent,
+                "resolved_parent_key": item.resolved_parent,
+                "priority": item.ticket.priority,
+                "labels": item.ticket.labels,
+                "reason": item.reason,
+            }
+        )
+    return {
+        "schema_version": 1,
+        "mode": "offline" if offline else "online",
+        "summary": {"total": len(items), **counts},
+        "items": rendered_items,
+    }
+
+
 @app.command()
 def validate(
     path: Annotated[Path | None, typer.Argument(help="Markdown ticket file or directory")] = None,
@@ -61,9 +97,10 @@ def validate(
 def plan(
     path: Annotated[Path | None, typer.Argument(help="Markdown ticket file or directory")] = None,
     offline: Annotated[bool, typer.Option("--offline", help="Do not contact Jira; infer update/create from jira_key only")] = False,
+    json_output: Annotated[bool, typer.Option("--json", help="Emit a machine-readable JSON plan")] = False,
 ) -> None:
     """Show what would be created or updated."""
-    settings, _, tickets = _load(path)
+    settings, ticket_path, tickets = _load(path)
     try:
         if offline:
             items = build_plan(tickets)
@@ -73,6 +110,10 @@ def plan(
     except (ValueError, JiraError) as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1)
+
+    if json_output:
+        typer.echo(json.dumps(_plan_payload(items, ticket_path, offline=offline), indent=2, ensure_ascii=False))
+        return
 
     table = Table(title="jira-sync plan")
     table.add_column("Action")
